@@ -494,12 +494,15 @@ def chunk(paras):
     return merged
 
 
-def topic_of(part) -> str:
+def topic_of(part, ctx: dict | None = None) -> str:
+    """Kurzbeschreibung eines Teils; ctx merkt sich den zuletzt gesehenen Anhang über Teile hinweg."""
     heads = []
     for t, text in part:
         if t == "h1" and "(Fortsetzung)" not in text:
-            h = re.sub(r"^(KAPITEL|TITEL|ANHANG|TEIL)\s+[IVXLC\d]+\s*[—–:-]?\s*", "", text, flags=re.I)
+            h = re.sub(r"^(KAPITEL|TITEL|ANHANG)\s+[IVXLC\d]+\s*[—–:-]?\s*", "", text, flags=re.I)
+            h = re.sub(r"^TEIL\s+(\d+)\s*[—–:-]?\s*", r"Teil \1 ", h)
             h = re.sub(r"\s*\([^)]*\)", "", re.sub(r"^\d{1,2}\.?\s+", "", h))  # "(RBA)" u.ä. weglassen
+            h = re.sub(r"[()]", "", h).strip()
             if not h:
                 continue
             heads.append(h if len(h) <= 35 else trim_words(h[:35].rsplit(" ", 1)[0]))
@@ -517,6 +520,12 @@ def topic_of(part) -> str:
         rng = f"{kind} {a}" if a == b or num(b) < num(a) else f"{kind} {a}-{b}"
     if nums:
         rng = f"Kap {nums[0]}" if nums[0] == nums[-1] else f"Kap {nums[0]}-{nums[-1]}"
+    if ctx is not None:
+        anh = [m.group(2) for m in labels if m.group(1).upper() == "ANHANG"]
+        if not rng and ctx.get("anhang"):
+            rng = f"Anhang {ctx['anhang']}"  # Fortsetzung eines Anhangs aus dem vorigen Teil
+        if anh:
+            ctx["anhang"] = anh[-1]
     topic = ", ".join(heads[:3])  # der Kapitelbereich zeigt, dass ggf. mehr enthalten ist
     return f"{rng} {topic}".strip()
 
@@ -533,10 +542,10 @@ def roman(s: str) -> int:
 
 
 def trim_words(s: str) -> str:
-    words = s.rstrip(" ,—–-:").split()
+    words = s.rstrip(" ,—–-:.").split()
     while len(words) > 1 and words[-1].lower() in STOP:
         words.pop()
-    return " ".join(words).rstrip(" ,—–-:")
+    return " ".join(words).rstrip(" ,—–-:.")
 
 
 def safe_name(s: str, limit: int = 110) -> str:
@@ -700,9 +709,17 @@ def eurlex_to_paragraphs(html: str) -> list[tuple[str, str]]:
         paras.extend(("table_row", x) for x in table_to_sentences(data))
 
     walk(root)
+    # "TEIL 3" / "ANHANG II" ohne Titel: folgende Zwischenüberschrift als Titel übernehmen
+    for i in range(len(paras) - 1):
+        k, t = paras[i]
+        if k == "h1" and re.match(r"^(KAPITEL|ANHANG|TEIL|TITEL)\s+[\dIVXLC]+$", t) and paras[i + 1][0] == "h2":
+            paras[i] = ("h1", f"{t} {paras[i + 1][1]}")
+            paras[i + 1] = ("skip", "")
     # Fußnoten direkt hinter den Absatz stellen, der auf sie verweist
     out, used = [], set()
     for i, (k, t) in enumerate(paras):
+        if k == "skip":
+            continue
         # leere Gliederungsebene entfernen (z. B. "Verfügender Teil" direkt vor "KAPITEL I")
         if k == "h1" and i + 1 < len(paras) and paras[i + 1][0] == "h1" and t == "Verfügender Teil":
             continue
@@ -766,9 +783,9 @@ def process_source(q: dict, path: Path, out: Path):
     else:
         source = q["url"]
     parts = chunk(paras)
-    files = []
+    files, ctx = [], {}
     for i, part in enumerate(parts, 1):
-        name = safe_name(base if len(parts) == 1 else f"{base} ({i} von {len(parts)}) {topic_of(part)}")
+        name = safe_name(base if len(parts) == 1 else f"{base} ({i} von {len(parts)}) {topic_of(part, ctx)}")
         write_docx(out / f"{name}.docx", name, source, part)
         files.append((name, words(part)))
     return files
