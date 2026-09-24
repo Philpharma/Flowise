@@ -29,7 +29,7 @@ NOTE_CLASSES = {"oj-note", "note", "footnote"}
 
 # Aufzählungszeichen: (1)  1.  a)  (a)  i)  (iv)  1.1.  —
 _E = r"(?:\d{1,3}(?:\.\d{1,3})*[a-z]?|[a-zA-Z]{1,2}|[ivxlcIVXLC]{1,6})"
-ENUM_RE = re.compile(rf"^(?:\({_E}\)|{_E}[.)]|[—–\-•·▪])$")
+ENUM_RE = re.compile(rf"^„?(?:\({_E}\)|{_E}[.)]|[—–\-•·▪])$")  # „ = Beginn eines zitierten (eingefügten) Textes
 
 # EUR-Lex-Konsolidierungsmarker (▼B, ►M1, ►C1, ◄) – redaktionelle Kennzeichen, kein Normtext.
 MARKER_RE = re.compile(r"[▼►]\s?(?:B|[MACR]\d{1,3})\b|◄")
@@ -302,6 +302,11 @@ class Linearizer:
                     self._emit([Run(self._pending_enum)], level + 1, tbl, [])
                     self._pending_enum = None
             return
+        if all(len(r) == 2 for r in rows) and all(t == "" for t in first_texts):
+            # Layouttabelle (z. B. EUR-Lex-Marker ►B/►C1 in der ersten Spalte): Inhalt der zweiten Spalte als Absätze
+            for r in rows:
+                self.process(r[1], level)
+            return
         if any(c.find("table") for r in rows for c in r):
             # Layouttabelle mit verschachtelten Tabellen: zellenweise linearisieren
             for r in rows:
@@ -316,9 +321,14 @@ class Linearizer:
         self._emit([], level, tbl, notes, kind="table", rows=cells)
 
 
+def doc_root(soup: BeautifulSoup):
+    """Dokumentbereich: bei gespeicherten EUR-Lex-Seiten #docHtml (ohne Inhaltsverzeichnis/Navigation)."""
+    return soup.find(id="docHtml") or soup.body or soup
+
+
 def linearize(html: str) -> tuple[list[Block], dict[str, Block], BeautifulSoup]:
     soup = BeautifulSoup(html, "lxml")
-    root = soup.body or soup
+    root = doc_root(soup)
     lin = Linearizer(soup)
     lin.process(root, 0)
     return lin.blocks, lin.notes, soup
@@ -396,6 +406,15 @@ def _looks_like_art_heading(b: Block) -> bool:
     return b.level == 0 or "art" in b.cls
 
 
+def _eli_art_verdict(b: Block) -> bool | None:
+    """Liegt eine ELI-Kennung vor, entscheidet sie: nur die Überschrift direkt in <div id="art_N"> ist
+    ein Artikel dieses Rechtsakts (zitierte, eingefügte Artikel liegen innerhalb eines anderen art_*)."""
+    if not b.eli_id.startswith("art_"):
+        return None
+    m = ARTIKEL_RE.match(b.text)
+    return bool(m) and b.eli_id == f"art_{m.group(1)}"
+
+
 def parse_structure(blocks: list[Block], notes: dict[str, Block], track_quotes: bool = False) -> ParsedAct:
     act = ParsedAct(blocks=blocks, notes=notes)
     state = "front"
@@ -422,6 +441,16 @@ def parse_structure(blocks: list[Block], notes: dict[str, Block], track_quotes: 
 
         if not quoted and state in ("final", "anhang") and b.kind == "table" and BACK_RE.match(b.text):
             state = "back"
+        eli_art = _eli_art_verdict(b) if b.kind == "p" and not b.enum else None
+        if eli_art and state in ("front", "recitals", "preamble_end", "enacting", "final"):
+            m = ARTIKEL_RE.match(t)
+            cur_unit = Unit("artikel", m.group(1), [b], kapitel=cur_kap.nummer if cur_kap else None,
+                            abschnitt=cur_abs.nummer if cur_abs else None)
+            act.articles.append(cur_unit)
+            expect_title = cur_unit.heading
+            state = "enacting"
+            depth = 0
+            continue
         if not quoted and not b.enum and b.kind == "p" and state != "back":
             if state != "anhang" and (m := KAPITEL_RE.match(t)):
                 cur_kap = Gliederung("kapitel", m.group(1), [b])
@@ -436,7 +465,7 @@ def parse_structure(blocks: list[Block], notes: dict[str, Block], track_quotes: 
                 expect_title = cur_abs.heading
                 cur_unit = None
                 continue
-            if state in ("front", "recitals", "preamble_end", "enacting") and _looks_like_art_heading(b):
+            if state in ("front", "recitals", "preamble_end", "enacting") and eli_art is None and _looks_like_art_heading(b):
                 m = ARTIKEL_RE.match(t)
                 cur_unit = Unit("artikel", m.group(1), [b], kapitel=cur_kap.nummer if cur_kap else None,
                                 abschnitt=cur_abs.nummer if cur_abs else None)
@@ -499,6 +528,7 @@ def parse(html: str, track_quotes: bool = False) -> ParsedAct:
 def independent_heading_scan(html: str) -> dict[str, list[str]]:
     """Zweiter, vom Linearisierer unabhängiger Scan der Überschriften direkt im HTML (für die QS)."""
     soup = BeautifulSoup(html, "lxml")
+    soup = doc_root(soup)
     for n in soup.find_all(_is_note):
         n.decompose()
     res = {"kapitel": [], "artikel": [], "anhaenge": [], "eli_artikel": [], "eli_anhaenge": [], "eli_rct": []}
@@ -532,5 +562,4 @@ def body_text_without_notes(html: str) -> str:
         t.decompose()
     for c in soup.find_all(string=lambda s: isinstance(s, Comment)):
         c.extract()
-    root = soup.body or soup
-    return root.get_text(" ")
+    return doc_root(soup).get_text(" ")

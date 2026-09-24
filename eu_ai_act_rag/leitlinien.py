@@ -23,7 +23,7 @@ from docx_writer import DocSpec, Section, write_docx, read_back
 from eurlex_parser import Block, Run, squash
 from planner import PlannedDoc, slug
 
-SEITEN_PRO_DATEI = 12
+MAX_SEITEN_PRO_DATEI = 15
 PARA_END = re.compile(r"[.:;!?)]$")
 ITEM_START = re.compile(r"^(\(?\d{1,3}[.)]|\(?[a-z][.)]|\(?[ivx]{1,5}\)|[•\-–—▪]|\d+(\.\d+)+\.?\s)")
 
@@ -78,14 +78,63 @@ def choose_pdf(links: list[tuple[str, str]]) -> tuple[str, str] | None:
     return (de or en or main or links)[0]
 
 
-def pdf_pages(data: bytes) -> list[list[str]]:
-    import pdfplumber
+def _pdfium_pages(data: bytes) -> list[list[str]]:
+    import pypdfium2 as pdfium
+    doc = pdfium.PdfDocument(data)
     pages = []
-    with pdfplumber.open(io.BytesIO(data)) as pdf:
-        for p in pdf.pages:
-            txt = p.extract_text() or ""
-            pages.append([ln.strip() for ln in txt.splitlines()])
+    for i in range(len(doc)):
+        # pdfium gibt Bindestrich-Glyphen (v. a. an Zeilenenden) als U+FFFE aus -> "-"; andere Steuerzeichen entfernen
+        txt = doc[i].get_textpage().get_text_range().replace("\ufffe", "-")
+        txt = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\uffff]", "", txt)
+        pages.append([ln.strip() for ln in txt.replace("\r\n", "\n").replace("\r", "\n").split("\n")])
     return pages
+
+
+def _plumber_pages(data: bytes) -> list[list[str]]:
+    import pdfplumber
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        return [[ln.strip() for ln in (p.extract_text() or "").splitlines()] for p in pdf.pages]
+
+
+def pdf_pages(data: bytes) -> list[list[str]]:
+    """Text je PDF-Seite. Deckblatt (S. 1) über pypdfium2 – pdfplumber vertauscht dort die Zeichen des
+    gestalteten Kopfs –, alle übrigen Seiten über pdfplumber (bessere Zeilenbildung bei hochgestellten
+    Fußnotenziffern). Beide Extraktoren werden in cross_check gegeneinander geprüft."""
+    first = _pdfium_pages(data)
+    rest = _plumber_pages(data)
+    return first[:1] + rest[1:]
+
+
+HEADING_RE = re.compile(r"^(?:\d{1,2}(?:\.\d{1,2}){0,3}\.?|[IVX]{1,4}\.|[A-H]\.)\s+\S")
+
+
+def is_heading(para: str) -> bool:
+    """Nummerierte Gliederungsüberschrift (kurz, ohne Satzendezeichen) – nur Formatierung, Text bleibt gleich."""
+    return (len(para) <= 110 and HEADING_RE.match(para) is not None and not PARA_END.search(para)
+            and not para.rstrip().endswith(",") and not re.search(r"\.{4,}|…{2,}|\s\d+$", para))
+
+
+def doc_facts(pages: list[list[str]]) -> dict:
+    """Datum, Aktenzeichen und Sprache deterministisch aus dem Deckblatt lesen."""
+    first = " ".join(" ".join(p) for p in pages[:2])
+    facts = {}
+    if m := re.search(r"(?:Brüssel, den|Brussels,)\s*([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{4}|XXX)", first):
+        facts["datum"] = m.group(1)
+    if m := re.search(r"(C\(\d{4}\)\s*\d+\s*final|\[…\]\(\d{4}\)\s*XXX\s*draft)", first):
+        facts["aktenzeichen"] = m.group(1)
+    facts["sprache"] = "DE" if re.search(r"\bDE DE\b|Brüssel", first) else ("EN" if re.search(r"\bEN EN\b|Brussels", first) else "")
+    return facts
+
+
+def cross_check(data: bytes, pages: list[list[str]]) -> list[int]:
+    """Unabhängige Zweitextraktion (pypdfium2): Seiten (ab S. 2), deren Zeichenbestand abweicht."""
+    import collections
+    other = _pdfium_pages(data)
+    bad = []
+    for i in range(1, min(len(pages), len(other))):
+        if collections.Counter(squash("".join(pages[i]))) != collections.Counter(squash("".join(other[i]))):
+            bad.append(i + 1)
+    return bad
 
 
 def lines_to_paragraphs(lines: list[str], min_full_line: int = 55) -> list[str]:
@@ -144,22 +193,35 @@ def build(out: Path, cache: Path, include_drafts: bool, quellen: Path, pdf_dir: 
                 results.append(GuidelineResult(e, False, f"Download ist kein PDF: {chosen[1]}", kandidaten=links))
                 continue
             pages = pdf_pages(data)
+            facts = doc_facts(pages)
+            xbad = cross_check(data, pages)
             sha = hashlib.sha256(data).hexdigest()
             docs = []
-            for start in range(0, len(pages), SEITEN_PRO_DATEI):
-                chunk = pages[start:start + SEITEN_PRO_DATEI]
+            n_files = -(-len(pages) // MAX_SEITEN_PRO_DATEI)
+            per_file = -(-len(pages) // n_files)  # gleichmäßig verteilen, keine Kleinstreste
+            for start in range(0, len(pages), per_file):
+                chunk = pages[start:start + per_file]
                 blocks: list[Block] = []
+                sections: list[Section] = []
                 for pno, lines in enumerate(chunk, start + 1):
                     for para in lines_to_paragraphs(lines):
-                        blocks.append(Block(idx=-1, kind="p", runs=[Run(para)]))
+                        b = Block(idx=-1, kind="p", runs=[Run(para)])
+                        blocks.append(b)
+                        if pno > 1 and is_heading(para):
+                            sections.append(Section("heading", 2 if para.count(".") <= 1 else 3, [b]))
+                        elif sections and sections[-1].kind == "blocks":
+                            sections[-1].blocks.append(b)
+                        else:
+                            sections.append(Section("blocks", blocks=[b]))
                 von, bis = start + 1, start + len(chunk)
-                prefix = "ENTWURF_" if draft else ""
+                prefix = "ENTWURF_" if draft and "ENTWURF" not in e["id"] else ""
                 name = f"{prefix}{e['id']}_S{von:03d}-{bis:03d}.docx"
                 meta = [
-                    ("Dokument", e["titel"]),
+                    ("Titel", e["titel"]),
                     ("Herausgeber", "Europäische Kommission"),
                     ("Status", "ENTWURF / DRAFT" if draft else "endgültig veröffentlicht"),
-                    ("Datum", e.get("datum", "")),
+                    ("Datum / Aktenzeichen", f"{facts.get('datum', e.get('datum', ''))}; {facts.get('aktenzeichen', '–')}"),
+                    ("Sprache", facts.get("sprache", "") or "–"),
                     ("Bezug", f"Verordnung (EU) 2024/1689, {e.get('artikel', '')}"),
                     ("Quelle", f"{e['seite']} → {chosen[1]} ({chosen[0]})"),
                     ("Abgerufen am", f"{dt.date.today().isoformat()}; SHA-256 PDF: {sha[:16]}…"),
@@ -168,27 +230,32 @@ def build(out: Path, cache: Path, include_drafts: bool, quellen: Path, pdf_dir: 
                                 "übernommen; Tabellen/Grafiken können im PDF-Original abweichend dargestellt sein." + (" " + warn if warn else "")),
                 ]
                 spec = DocSpec(out / ordner / name, e["titel"] + f" (S. {von}–{bis})", meta,
-                               [Section("blocks", blocks=blocks)], entwurf=draft,
+                               sections, entwurf=draft,
                                core_subject="Leitlinien der Kommission zur KI-Verordnung",
                                core_keywords=f"Leitlinien; {e.get('artikel', '')}")
                 write_docx(spec)
                 exp = squash("".join(b.text for b in blocks))
                 got = squash("".join(read_back(spec.path)["content"]))
                 src = squash("".join("".join(l) for l in chunk))
-                ok = exp == got == src
+                ok = exp == got == src and not any(von <= x <= bis for x in xbad)
                 pd = PlannedDoc(spec, "Leitlinie (ENTWURF)" if draft else "Leitlinie", ordner,
-                                celex="– (keine CELEX; Kommissionsdokument)", fassung=e.get("datum", ""),
+                                celex=f"– ({facts.get('aktenzeichen', 'Kommissionsdokument')})",
+                                fassung=facts.get("datum", e.get("datum", "")),
                                 qa_status="OK" if ok else "FEHLER")
                 pd.anhang = ""
                 pd.kapitel = e.get("artikel", "")
                 if not ok:
-                    pd.qa_details.append("Extrahierter PDF-Text weicht vom Word-Inhalt ab")
+                    pd.qa_details.append("Extrahierter PDF-Text weicht vom Word-Inhalt oder von der Zweitextraktion ab"
+                                         + (f" (Seiten {[x for x in xbad if von <= x <= bis]})" if xbad else ""))
+                else:
+                    pd.qa_details.append("Text von S. 2 an mit zweitem Extraktor (pypdfium2) gegengeprüft; Deckblatt nur pypdfium2")
                 docs.append(pd)
             results.append(GuidelineResult(e, all(d.qa_status == "OK" for d in docs),
-                                           f"{len(pages)} PDF-Seiten, {len(docs)} Datei(en)" + (f"; {warn}" if warn else ""),
+                                           f"{len(pages)} PDF-Seiten, {len(docs)} Datei(en), Sprache {facts.get('sprache') or '?'}, {facts.get('aktenzeichen', '')}" + (f"; {warn}" if warn else ""),
                                            docs, links))
         except Exception as exc:  # noqa: BLE001 – Fehler je Leitlinie berichten, Lauf fortsetzen
-            results.append(GuidelineResult(e, False, f"Abruf/Verarbeitung fehlgeschlagen: {exc}"))
+            hint = f"kein lokales PDF {local_pdf.name} vorhanden; " if local_pdf is not None else ""
+            results.append(GuidelineResult(e, False, f"{hint}Abruf/Verarbeitung fehlgeschlagen: {str(exc)[:160]}"))
     return results
 
 

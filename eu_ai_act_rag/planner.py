@@ -152,18 +152,28 @@ def plan_articles(fd: FetchedDocument, act: ParsedAct, out: Path) -> list[Planne
     kap_by_nr = {k.nummer: k for k in act.kapitel}
     abs_by_key = {(a.kapitel, a.nummer): a for a in act.abschnitte}
     # Einheiten: (Kapitel, Abschnitt) -> Artikel in Quellreihenfolge
-    groups: list[tuple[str | None, str | None, list[Unit]]] = []
+    groups: list[tuple[str | None, list[str | None], list[Unit]]] = []
     for a in act.articles:
-        key = (a.kapitel, a.abschnitt)
-        if groups and (groups[-1][0], groups[-1][1]) == key:
+        if groups and groups[-1][0] == a.kapitel and groups[-1][1][-1] == a.abschnitt:
             groups[-1][2].append(a)
         else:
-            groups.append((a.kapitel, a.abschnitt, [a]))
-    # Kapitelüberschrift ohne eigene Artikel vor dem ersten Abschnitt? -> wird beim ersten Teil ausgegeben
+            groups.append((a.kapitel, [a.abschnitt], [a]))
+    # Benachbarte kleine Abschnitte desselben Kapitels zusammenfassen (Kapitelgrenzen bleiben erhalten)
+    min_chars = config.MIN_SEITEN * config.ZEICHEN_PRO_SEITE
+    size = lambda arts: sum(u.chars for u in arts)  # noqa: E731
+    merged: list[tuple[str | None, list[str | None], list[Unit]]] = []
+    for g in groups:
+        if (merged and merged[-1][0] == g[0] and size(merged[-1][2]) < min_chars and size(g[2]) < min_chars
+                and size(merged[-1][2]) + size(g[2]) <= config.ZIEL_ZEICHEN):
+            merged[-1][1].extend(g[1])
+            merged[-1][2].extend(g[2])
+        else:
+            merged.append((g[0], list(g[1]), list(g[2])))
+
     seen_kap, seen_abs = set(), set()
-    for kap_nr, abs_nr, arts in groups:
+    for kap_nr, abs_nrs, arts in merged:
         kap = kap_by_nr.get(kap_nr)
-        ab = abs_by_key.get((kap_nr, abs_nr))
+        abs_list = [abs_by_key[(kap_nr, x)] for x in abs_nrs if (kap_nr, x) in abs_by_key]
         parts = pack(arts, lambda u: u.chars, config.MAX_ZEICHEN, config.ZIEL_ZEICHEN)
         for pi, part in enumerate(parts, 1):
             n += 1
@@ -175,28 +185,39 @@ def plan_articles(fd: FetchedDocument, act: ParsedAct, out: Path) -> list[Planne
                     seen_kap.add(kap_nr)
                 else:
                     sections.append(Section("context", 1, text=" – ".join(b.text for b in kap.heading) + " (Fortsetzung)"))
-            if ab:
-                if (kap_nr, abs_nr) not in seen_abs:
-                    sections.append(Section("heading", 2, ab.heading))
-                    seen_abs.add((kap_nr, abs_nr))
-                else:
-                    sections.append(Section("context", 2, text=" – ".join(b.text for b in ab.heading) + " (Fortsetzung)"))
+            cur_abs = object()
             for a in part:
+                if a.abschnitt != cur_abs:
+                    cur_abs = a.abschnitt
+                    ab = abs_by_key.get((kap_nr, a.abschnitt))
+                    if ab is not None:
+                        if (kap_nr, ab.nummer) not in seen_abs:
+                            sections.append(Section("heading", 2, ab.heading))
+                            seen_abs.add((kap_nr, ab.nummer))
+                        else:
+                            sections.append(Section("context", 2, text=" – ".join(b.text for b in ab.heading) + " (Fortsetzung)"))
                 sections.append(Section("heading", 3, a.heading))
                 sections.append(Section("blocks", blocks=a.body))
             if is_last_group and act.final:
                 sections.append(Section("context", 3, text="Schlussformel"))
                 sections.append(Section("blocks", blocks=act.final))
             nums = [a.nummer for a in part]
+            part_abs = [x for x in abs_list if any(a.abschnitt == x.nummer for a in part)]
             name_parts = [f"{n:02d}"]
             titel_parts = []
             if kap:
                 name_parts.append(f"Kapitel_{kap.nummer}")
                 titel_parts.append(f"Kapitel {kap.nummer} – {kap.titel}")
-            if ab:
+            if len(part_abs) == 1:
+                ab = part_abs[0]
                 name_parts.append(f"Abschnitt_{ab.nummer}")
                 titel_parts.append(f"Abschnitt {ab.nummer} – {ab.titel}")
-            topic = (ab or kap).titel if (ab or kap) else ""
+                topic = ab.titel
+            else:
+                if part_abs:
+                    name_parts.append(f"Abschnitt_{part_abs[0].nummer}-{part_abs[-1].nummer}")
+                    titel_parts.append(f"Abschnitte {part_abs[0].nummer}–{part_abs[-1].nummer}")
+                topic = kap.titel if kap else ""
             if topic:
                 name_parts.append(slug(title_case_de(topic), 55))
             name_parts.append(f"Art_{_range(nums)}")
@@ -210,7 +231,7 @@ def plan_articles(fd: FetchedDocument, act: ParsedAct, out: Path) -> list[Planne
                            core_keywords=f"KI-Verordnung; Artikel {_range(nums)}")
             docs.append(PlannedDoc(spec, "Artikel (verfügender Teil)", ordner,
                                    kapitel=f"Kapitel {kap.nummer} – {kap.titel}" if kap else "",
-                                   abschnitt=f"Abschnitt {ab.nummer} – {ab.titel}" if ab else "",
+                                   abschnitt=" | ".join(f"Abschnitt {x.nummer} – {x.titel}" for x in part_abs),
                                    artikel=nums, celex=fd.source.celex, fassung=fassung, quelle_key=fd.source.key,
                                    units=part))
     return docs

@@ -149,8 +149,7 @@ def main(argv=None) -> int:
     omni_required = [b for a in omni.articles for b in a.blocks] + omni.final + [b for a in omni.annexes for b in a.blocks]
     qa.check_recitals(res, "VO 2026/1744 – Erwägungsgründe und verfügender Teil", sources["omnibus"].html, omni,
                       docs_omni_rct + docs_omni, config.EXPECTED["omnibus"]["erwaegungsgruende"], omni_required)
-    res.add("VO 2026/1744", "Artikel der Änderungsverordnung erkannt", bool(omni.articles),
-            ", ".join(a.nummer for a in omni.articles))
+    qa.check_articles_vs_eli(res, "VO 2026/1744 – Erwägungsgründe und verfügender Teil", sources["omnibus"].html, omni)
     for d in all_docs:
         qa.check_docx(res, d)
 
