@@ -1,0 +1,35 @@
+name: EU-GMP PDFs -> Word (RAG)
+
+on:
+    workflow_dispatch:
+    push:
+        branches: [claude/cool-davinci-fz5fai]
+        paths: ['eu-gmp-rag/*.py', 'eu-gmp-rag/requirements.txt', '.github/workflows/eu-gmp-rag.yml']
+
+permissions:
+    contents: write
+
+jobs:
+    convert:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: '3.11'
+            - run: pip install -r eu-gmp-rag/requirements.txt
+            - name: PDFs laden und konvertieren
+              run: |
+                  rm -rf eu-gmp-rag/ausgabe eu-gmp-rag/ausgabe.zip
+                  python eu-gmp-rag/eu_gmp_to_docx.py --out eu-gmp-rag/ausgabe
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: eu-gmp-word
+                  path: eu-gmp-rag/ausgabe.zip
+            - name: Ergebnis in den Branch committen
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  git add -f eu-gmp-rag/ausgabe eu-gmp-rag/ausgabe.zip
+                  git commit -m "EU-GMP: Word-Dateien neu erzeugt" || exit 0
+                  git push
