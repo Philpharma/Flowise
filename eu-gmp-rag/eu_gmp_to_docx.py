@@ -498,7 +498,7 @@ def topic_of(part) -> str:
     heads = []
     for t, text in part:
         if t == "h1" and "(Fortsetzung)" not in text:
-            h = re.sub(r"^(KAPITEL|TITEL|ANHANG|TEIL)\s+[IVXLC\d]+\s*", "", text, flags=re.I)
+            h = re.sub(r"^(KAPITEL|TITEL|ANHANG|TEIL)\s+[IVXLC\d]+\s*[—–:-]?\s*", "", text, flags=re.I)
             h = re.sub(r"\s*\([^)]*\)", "", re.sub(r"^\d{1,2}\.?\s+", "", h))  # "(RBA)" u.ä. weglassen
             if not h:
                 continue
@@ -507,13 +507,14 @@ def topic_of(part) -> str:
         heads = [re.sub(r"^\d{1,2}\.\d{1,2}\.?\s+", "", t2) for t, t2 in part if t == "h2"][:2]
     nums = [int(H1_RE.match(t2).group(1)) for t, t2 in part if t == "h1" and H1_RE.match(t2)]
     rng = ""
-    labels = [re.match(r"^(KAPITEL|ANHANG)\s+([IVXLC]+)\b", t2, re.I) for t, t2 in part if t == "h1"]
+    labels = [re.match(r"^(KAPITEL|ANHANG)\s+([IVXLC]+|\d+)\b", t2, re.I) for t, t2 in part if t == "h1"]
     labels = [m for m in labels if m]
     if labels and not nums:
         kind = "Kap" if labels[0].group(1).upper() == "KAPITEL" else "Anhang"
         same = [m for m in labels if (m.group(1).upper() == "KAPITEL") == (kind == "Kap")]
         a, b = same[0].group(2), same[-1].group(2)
-        rng = f"{kind} {a}" if a == b or roman(b) < roman(a) else f"{kind} {a}-{b}"
+        num = lambda x: int(x) if x.isdigit() else roman(x)
+        rng = f"{kind} {a}" if a == b or num(b) < num(a) else f"{kind} {a}-{b}"
     if nums:
         rng = f"Kap {nums[0]}" if nums[0] == nums[-1] else f"Kap {nums[0]}-{nums[-1]}"
     topic = ", ".join(heads[:3])  # der Kapitelbereich zeigt, dass ggf. mehr enthalten ist
@@ -668,7 +669,7 @@ def eurlex_to_paragraphs(html: str) -> list[tuple[str, str]]:
             elif re.search(r"(^|\s)(oj-)?sti-art", c) and paras and paras[-1] == ("h2", pending["art"]):
                 paras[-1] = ("h2", f"{pending['art']} {t}")
             elif re.search(r"ti-grseq|ti-tbl", c):
-                emit("h2", t)
+                emit("h1" if re.match(r"^(KAPITEL|ANHANG|TEIL|EINLEITUNG$)", t) else "h2", t)
             else:
                 seen_title[0] = True
                 if t.lower().startswith("in erwägung nachstehender gründe"):
@@ -683,12 +684,13 @@ def eurlex_to_paragraphs(html: str) -> list[tuple[str, str]]:
     def table(tbl, prefix=""):
         rows = [tr for tr in tbl.find_all("tr") if tr.find_parent("table") is tbl]
         cells = [[td for td in tr.find_all(["td", "th"]) if td.find_parent("tr") is tr] for tr in rows]
-        # Aufzählungstabelle: 2 Spalten, erste Spalte nur Marke wie "(a)", "1.", "—"
-        if cells and all(len(r) == 2 and len(_text(r[0])) <= 8 for r in cells if r):
+        # leere Einrückungszellen am Zeilenanfang (älteres Amtsblatt-Format) ignorieren
+        cells = [r[next((i for i, td in enumerate(r) if td.get_text(strip=True)), len(r)):] for r in cells]
+        cells = [r for r in cells if r]
+        # Aufzählungstabelle: erste Spalte nur Marke wie "(a)", "1.1.", "—", zweite Spalte Text
+        if cells and all(len(r) == 2 and len(r[0].get_text(" ", strip=True)) <= 10 for r in cells):
             for r in cells:
-                if r:
-                    mark = _text(r[0])
-                    walk(r[1], mark)
+                walk(r[1], _text(r[0]))
             return
         data = [[_text(td) for td in r] for r in cells if r]
         if any("Amtsblatt der Europäischen Union" in c for r in data[:1] for c in r):
