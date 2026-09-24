@@ -1,0 +1,51 @@
+{
+  "_hinweis": "Nur offizielle Seiten der Europäischen Kommission (*.europa.eu). 'status' = final | draft. Entwürfe werden nur mit --entwuerfe übernommen und dann als ENTWURF / DRAFT gekennzeichnet. Der Status wird beim Lauf zusätzlich gegen den Seitentitel geprüft (enthält er 'draft', wird gewarnt). Stand der Liste: 24.09.2026, bitte vor Verwendung auf der Kommissionsseite zum AI Act prüfen.",
+  "leitlinien": [
+    {
+      "id": "01_Definition_KI-System",
+      "titel": "Leitlinien der Kommission zur Definition eines KI-Systems (Art. 3 Nr. 1 KI-VO)",
+      "seite": "https://digital-strategy.ec.europa.eu/en/library/commission-publishes-guidelines-ai-system-definition-facilitate-first-ai-acts-rules-application",
+      "status": "final",
+      "datum": "2025-02-06",
+      "artikel": "Art. 3 Nr. 1"
+    },
+    {
+      "id": "02_Verbotene_KI-Praktiken",
+      "titel": "Leitlinien der Kommission zu verbotenen KI-Praktiken (Art. 5 KI-VO)",
+      "seite": "https://digital-strategy.ec.europa.eu/en/library/commission-publishes-guidelines-prohibited-artificial-intelligence-ai-practices-defined-ai-act",
+      "status": "final",
+      "datum": "2025-02-04",
+      "artikel": "Art. 5"
+    },
+    {
+      "id": "03_GPAI_Anbieterpflichten",
+      "titel": "Leitlinien zum Umfang der Pflichten der Anbieter von KI-Modellen mit allgemeinem Verwendungszweck",
+      "seite": "https://digital-strategy.ec.europa.eu/en/library/guidelines-scope-obligations-providers-general-purpose-ai-models-under-ai-act",
+      "status": "final",
+      "datum": "2025-07-18",
+      "artikel": "Art. 3 Nr. 63-67, Art. 51-55"
+    },
+    {
+      "id": "04_Transparenzpflichten_Art_50",
+      "titel": "Leitlinien zu den Transparenzpflichten für Anbieter und Betreiber bestimmter KI-Systeme (Art. 50 KI-VO)",
+      "seite": "https://digital-strategy.ec.europa.eu/en/library/guidelines-transparency-obligations-providers-and-deployers-ai-systems",
+      "status": "final",
+      "datum": "2026-07-20",
+      "artikel": "Art. 50"
+    },
+    {
+      "id": "90_ENTWURF_Einstufung_Hochrisiko",
+      "titel": "ENTWURF: Leitlinien der Kommission zur Einstufung von Hochrisiko-KI-Systemen (Art. 6 KI-VO)",
+      "seite": "https://digital-strategy.ec.europa.eu/en/library/draft-commission-guidelines-classification-high-risk-ai-systems",
+      "status": "draft",
+      "datum": "2026",
+      "artikel": "Art. 6, Anhang I, Anhang III"
+    }
+  ],
+  "discovery_seiten": [
+    "https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai",
+    "https://digital-strategy.ec.europa.eu/en/policies/guidelines-gpai-providers",
+    "https://digital-strategy.ec.europa.eu/en/policies/guidelines-transparency-ai-generated-content",
+    "https://digital-strategy.ec.europa.eu/en/policies/guidelines-ai-high-risk-systems"
+  ]
+}
