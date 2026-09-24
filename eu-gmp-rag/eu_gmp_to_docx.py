@@ -532,6 +532,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="ausgabe")
     ap.add_argument("--pdf-dir", help="Ordner mit bereits geladenen PDFs (Dateiname = Linktext, z.B. 'Kapitel 1.pdf')")
+    ap.add_argument("--quellen", help="quellen.json mit Zusatzdokumenten (vorher mit quellen_laden.py laden)")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
