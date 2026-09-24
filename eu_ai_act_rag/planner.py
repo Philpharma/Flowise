@@ -107,10 +107,13 @@ def pack(units: list, size, max_chars: int, target: int) -> list[list]:
         cur_size += s
     if cur:
         groups.append(cur)
-    # sehr kleine Restgruppe an die vorherige anhängen, wenn Obergrenze eingehalten wird
-    if len(groups) > 1 and sum(size(u) for u in groups[-1]) < config.MIN_SEITEN * config.ZEICHEN_PRO_SEITE \
-            and sum(size(u) for u in groups[-2] + groups[-1]) <= max_chars:
-        groups[-2].extend(groups.pop())
+    # sehr kleine Restgruppe an die vorherige anhängen, wenn Obergrenze eingehalten wird;
+    # Reste unter einer Seite immer (vermeidet Kleinstdateien)
+    if len(groups) > 1:
+        tail = sum(size(u) for u in groups[-1])
+        if tail < config.ZEICHEN_PRO_SEITE or (tail < config.MIN_SEITEN * config.ZEICHEN_PRO_SEITE
+                                               and sum(size(u) for u in groups[-2] + groups[-1]) <= max_chars):
+            groups[-2].extend(groups.pop())
     return groups
 
 

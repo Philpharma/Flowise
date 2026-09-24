@@ -297,7 +297,7 @@ def build_from_markdown(e: dict, md_path: Path, out: Path, draft: bool) -> Guide
             else:
                 sections.append(Section("blocks", blocks=[b]))
         heads = [b.text for k, _, b in flat if k == "heading"]
-        nums = [n for n in (h.split(" ", 1)[0].rstrip(".") for h in heads) if re.fullmatch(r"[IVX]+|\d+(?:\.\d+)*", n)]
+        nums = [m.group(1) for m in (re.match(r"^([IVX]+|\d+(?:\.\d+)*)\.?(?=\s|[^\W\d]|[\"„'(])", h) for h in heads) if m]
         rng = f"_Abschn_{nums[0]}-{nums[-1]}" if nums else ""
         name = f"{e['id']}_Teil_{gi:02d}{rng}.docx" if len(groups) > 1 else f"{e['id']}.docx"
         meta = [

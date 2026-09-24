@@ -22,8 +22,9 @@ IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 HEADING_MD_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 LIST_RE = re.compile(r"^(\s*)[-*+]\s+(.*)$")
 TABLE_SEP_RE = re.compile(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
-NUM_HEADING_RE = re.compile(
-    r"^(?P<rom>[IVX]{1,5}\.)\s|^(?P<num>\d{1,2}(?:\.\d{1,2}){0,4}\.?)\s|^(?P<let>[a-z]\))\s|^(?P<low>[ivx]{1,5}\.)\s")
+NUM_HEADING_RE = re.compile(  # Leerzeichen nach der Nummer optional (Konverter lässt es teils weg: "4.3.Außerhalb")
+    r"^(?P<rom>[IVX]{1,5}\.)\s*(?=[^\W\d]|[\"„'(])|^(?P<num>\d{1,2}(?:\.\d{1,2}){0,4}\.)\s*(?=[^\W\d]|[\"„'(])"
+    r"|^(?P<num2>\d{1,2}(?:\.\d{1,2}){1,4})\s|^(?P<let>[a-z]\))\s|^(?P<low>[ivx]{1,5}\.)\s")
 
 INLINE_RE = re.compile(
     r"(?P<sup><sup>(?P<sup_t>.*?)</sup>)"
@@ -105,20 +106,27 @@ def plain(runs: list[Run]) -> str:
     return "".join(r.text for r in runs if not r.label)
 
 
-def heading_level(text: str) -> int | None:
-    """Gliederungsebene aus der Nummerierung; None = keine echte Überschrift."""
+def heading_level(text: str, runs: list[Run] | None = None, md_heading: bool = True) -> int | None:
+    """Gliederungsebene aus der Nummerierung; None = keine echte Überschrift.
+
+    Kandidaten sind vom Konverter als Überschrift markierte Zeilen sowie vollständig fett gesetzte,
+    nummerierte Absätze/Listenpunkte (der Konverter markiert Überschriften nicht immer mit #)."""
     t = text.rstrip()
-    if len(t) > 160 or t.endswith((":", ";", ",")) or (t.endswith(".") and len(t) > 60):
+    all_bold = bool(runs) and all(r.bold for r in runs if r.text.strip() and not r.sup and not r.label)
+    if not md_heading and not all_bold:
+        return None
+    if len(t) > (320 if all_bold else 220) or t.endswith((";", ",")) or (t.endswith(".") and len(t) > 60 and not all_bold):
         return None
     m = NUM_HEADING_RE.match(text)
     if not m:
         return None
     if m.group("rom"):
         return 1
-    if m.group("num"):
-        depth = m.group("num").rstrip(".").count(".") + 1
+    num = m.group("num") or m.group("num2")
+    if num:
+        depth = num.rstrip(".").count(".") + 1
         return min(depth + 1, 4)
-    return 4
+    return 4 if md_heading else None
 
 
 def parse_markdown(md: str) -> tuple[list[tuple[str, int, Block]], MdStats]:
@@ -135,7 +143,8 @@ def parse_markdown(md: str) -> tuple[list[tuple[str, int, Block]], MdStats]:
         if para:
             runs = inline_runs(_protect(" ".join(x.strip() for x in para)), stats)
             if plain(runs).strip():
-                items.append(("p", 0, Block(idx=-1, kind="p", runs=runs)))
+                lvl = heading_level(plain(runs), runs, md_heading=False)
+                items.append(("heading" if lvl else "p", lvl or 0, Block(idx=-1, kind="p", runs=runs)))
         para = []
 
     while i < len(lines):
@@ -170,7 +179,7 @@ def parse_markdown(md: str) -> tuple[list[tuple[str, int, Block]], MdStats]:
             runs = inline_runs(_protect(m.group(2)), stats)
             txt = plain(runs)
             if txt.strip():
-                lvl = heading_level(txt)
+                lvl = heading_level(txt, runs)
                 items.append(("heading" if lvl else "p", lvl or 0, Block(idx=-1, kind="p", runs=runs)))
             i += 1
             continue
@@ -178,7 +187,11 @@ def parse_markdown(md: str) -> tuple[list[tuple[str, int, Block]], MdStats]:
             flush()
             level = 1 + len(m.group(1).replace("\t", "    ")) // 2
             runs = inline_runs(_protect(m.group(2)), stats)
-            items.append(("p", 0, Block(idx=-1, kind="p", runs=runs, level=level)))  # kein künstliches Aufzählungszeichen
+            lvl = heading_level(plain(runs), runs, md_heading=False)
+            if lvl:
+                items.append(("heading", lvl, Block(idx=-1, kind="p", runs=runs)))
+            else:
+                items.append(("p", 0, Block(idx=-1, kind="p", runs=runs, level=level)))  # kein künstliches Aufzählungszeichen
             i += 1
             # Folgezeilen eines Listenpunkts
             while i < len(lines) and lines[i].strip() and not LIST_RE.match(lines[i]) \
