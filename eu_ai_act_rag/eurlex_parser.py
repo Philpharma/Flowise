@@ -45,6 +45,7 @@ class Run:
     sub: bool = False
     bold: bool = False
     italic: bool = False
+    label: bool = False  # technischer Zusatz (z. B. Link-Ziel), nicht Teil des Quelltexts
 
 
 @dataclass
@@ -71,7 +72,7 @@ class Block:
     def text(self) -> str:
         if self.kind == "table":
             return " ".join(c.text for r in self.rows for c in r if c.text)
-        return "".join(r.text for r in self.runs)
+        return "".join(r.text for r in self.runs if not r.label)
 
     @property
     def full_text(self) -> str:

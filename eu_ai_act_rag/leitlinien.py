@@ -170,6 +170,13 @@ def build(out: Path, cache: Path, include_drafts: bool, quellen: Path, pdf_dir: 
             results.append(GuidelineResult(e, True, "Entwurf – nicht übernommen (Option --entwuerfe)"))
             continue
         local_pdf = pdf_dir / f"{e['id']}.pdf" if pdf_dir else None
+        local_md = pdf_dir / f"{e['id']}.md" if pdf_dir else None
+        if local_md is not None and local_md.exists() and not local_pdf.exists():
+            try:
+                results.append(build_from_markdown(e, local_md, out, draft))
+            except Exception as exc:  # noqa: BLE001
+                results.append(GuidelineResult(e, False, f"Markdown-Verarbeitung fehlgeschlagen: {exc}"))
+            continue
         try:
             if local_pdf is not None and local_pdf.exists():
                 page, links, title = b"", [], ""
@@ -257,6 +264,81 @@ def build(out: Path, cache: Path, include_drafts: bool, quellen: Path, pdf_dir: 
             hint = f"kein lokales PDF {local_pdf.name} vorhanden; " if local_pdf is not None else ""
             results.append(GuidelineResult(e, False, f"{hint}Abruf/Verarbeitung fehlgeschlagen: {str(exc)[:160]}"))
     return results
+
+
+def build_from_markdown(e: dict, md_path: Path, out: Path, draft: bool) -> GuidelineResult:
+    """Leitlinie aus einer vom Nutzer bereitgestellten Markdown-Konvertierung des Kommissions-PDF."""
+    from markdown_quelle import parse_markdown, reference_text
+    from planner import pack
+
+    md = md_path.read_text(encoding="utf-8")
+    items, stats = parse_markdown(md)
+    facts = doc_facts([[md[:3000]]])
+    ordner = config.ORDNER["leitlinien"]
+    # Segmente an Überschriften der Ebenen 1–3 beginnen
+    segments: list[list[tuple[str, int, Block]]] = []
+    for it in items:
+        if not segments or (it[0] == "heading" and it[1] <= 3):
+            segments.append([])
+        segments[-1].append(it)
+    size = lambda seg: sum(len(b.text) if b.kind == "p" else len(b.text) for _, _, b in seg)  # noqa: E731
+    groups = pack(segments, size, config.MAX_ZEICHEN, config.ZIEL_ZEICHEN)
+    sha = hashlib.sha256(md.encode()).hexdigest()
+    docs = []
+    heads_all = [b.text for k, _, b in items if k == "heading"]
+    for gi, g in enumerate(groups, 1):
+        flat = [it for seg in g for it in seg]
+        sections: list[Section] = []
+        for kind, lvl, b in flat:
+            if kind == "heading":
+                sections.append(Section("heading", lvl, [b]))
+            elif sections and sections[-1].kind == "blocks":
+                sections[-1].blocks.append(b)
+            else:
+                sections.append(Section("blocks", blocks=[b]))
+        heads = [b.text for k, _, b in flat if k == "heading"]
+        nums = [n for n in (h.split(" ", 1)[0].rstrip(".") for h in heads) if re.fullmatch(r"[IVX]+|\d+(?:\.\d+)*", n)]
+        rng = f"_Abschn_{nums[0]}-{nums[-1]}" if nums else ""
+        name = f"{e['id']}_Teil_{gi:02d}{rng}.docx" if len(groups) > 1 else f"{e['id']}.docx"
+        meta = [
+            ("Titel", e["titel"]),
+            ("Herausgeber", "Europäische Kommission"),
+            ("Status", "ENTWURF / DRAFT" if draft else "endgültig veröffentlicht"),
+            ("Datum / Aktenzeichen", f"{facts.get('datum', e.get('datum', ''))}; {facts.get('aktenzeichen', '–')}"),
+            ("Sprache", facts.get("sprache", "") or "–"),
+            ("Bezug", f"Verordnung (EU) 2024/1689, {e.get('artikel', '')}"),
+            ("Quelle", f"{e['seite']} – Textgrundlage: vom Nutzer bereitgestellte Markdown-Konvertierung "
+                       f"des Kommissions-PDF ({md_path.name}, Konverter-Merkmale: marker)"),
+            ("Übernommen am", f"{dt.date.today().isoformat()}; SHA-256 Markdown: {sha[:16]}…"),
+            ("Enthaltener Inhalt", f"Teil {gi} von {len(groups)}: " + (f"{heads[0]} … {heads[-1]}" if heads else "Vorspann")),
+            ("Hinweis", "Nicht verbindliche Leitlinien, kein Gesetzestext. Nicht gegen das Original-PDF geprüft; "
+                        f"{stats.bilder} Bild(er) der Vorlage (Logo/Grafik) nicht übernommen. Link-Ziele in <…> ergänzt."),
+        ]
+        spec = DocSpec(out / ordner / name, e["titel"] + (f" (Teil {gi} von {len(groups)})" if len(groups) > 1 else ""),
+                       meta, sections, entwurf=draft, core_subject="Leitlinien der Kommission zur KI-Verordnung",
+                       core_keywords=f"Leitlinien; {e.get('artikel', '')}")
+        write_docx(spec)
+        exp = squash("".join(b.text if b.kind == "p" else "".join(c.text for r in b.rows for c in r) for _, _, b in flat))
+        got = squash("".join(read_back(spec.path)["content"])).replace("•", "")
+        ok = exp.replace("•", "") == got
+        pd = PlannedDoc(spec, "Leitlinie (ENTWURF)" if draft else "Leitlinie", ordner,
+                        celex=f"– ({facts.get('aktenzeichen', 'Kommissionsdokument')})",
+                        fassung=facts.get("datum", e.get("datum", "")), qa_status="OK" if ok else "FEHLER")
+        pd.kapitel = e.get("artikel", "")
+        pd.qa_details.append("Quelle: Markdown-Konvertierung (nicht gegen PDF geprüft)" if ok
+                             else "Word-Inhalt weicht vom Markdown-Text ab")
+        docs.append(pd)
+    ref = squash(reference_text(md))
+    parsed = squash("".join(b.text if b.kind == "p" else "".join(c.text for r in b.rows for c in r) for _, _, b in items))
+    complete = ref == parsed
+    if not complete:
+        for d in docs:
+            d.qa_status = "FEHLER"
+            d.qa_details.append("Markdown-Text nicht vollständig übernommen (Abgleich mit Referenztext)")
+    ok = complete and all(d.qa_status == "OK" for d in docs)
+    return GuidelineResult(e, ok, f"Markdown ({md_path.name}): {len(heads_all)} Überschriften, {len(docs)} Datei(en), "
+                                  f"Sprache {facts.get('sprache') or '?'}, {facts.get('aktenzeichen', '')}; "
+                                  f"Vollständigkeitsabgleich {'bestanden' if complete else 'NICHT bestanden'}", docs)
 
 
 def discover(cache: Path, quellen: Path) -> list[tuple[str, str, str]]:

@@ -63,7 +63,7 @@ def _ensure_styles(doc: Document):
     normal.element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
     pf = normal.paragraph_format
     pf.space_before, pf.space_after, pf.line_spacing = Pt(0), Pt(4), 1.05
-    for lvl, size in ((1, 15), (2, 13), (3, 11.5)):
+    for lvl, size in ((1, 15), (2, 13), (3, 11.5), (4, 11)):
         h = st[f"Heading {lvl}"]
         h.font.size = Pt(size)
         h.font.name = "Calibri"
@@ -106,7 +106,7 @@ def _page_setup(doc: Document):
 
 def _add_runs(par, runs: list[Run]):
     for r in runs:
-        run = par.add_run(r.text)
+        run = par.add_run(r.text, style=LABEL_STYLE if r.label else None)
         if r.sup:
             run.font.superscript = True
         if r.sub:
