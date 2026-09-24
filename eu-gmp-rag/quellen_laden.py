@@ -8,7 +8,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -31,7 +31,7 @@ def eurlex(celex: str):
     for accept in ("application/xhtml+xml", "text/html", "application/pdf"):
         try:
             h = dict(UA, Accept=accept, **{"Accept-Language": "deu"})
-            r = requests.get(CELLAR.format(celex), headers=h, timeout=120, allow_redirects=True)
+            r = requests.get(CELLAR.format(quote(celex, safe="")), headers=h, timeout=120, allow_redirects=True)
             if r.status_code == 300:  # mehrere Dateien: erste passende nehmen
                 links = re.findall(r'href="([^"]+)"', r.text)
                 if links:

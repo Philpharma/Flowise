@@ -24,3 +24,21 @@ pip install -r requirements.txt
 python eu_gmp_to_docx.py --out ausgabe            # lädt direkt von der BMG-Seite
 python eu_gmp_to_docx.py --pdf-dir pdfs --out ausgabe   # oder mit bereits geladenen PDFs
 ```
+
+## Zusatzdokumente (`quellen.json`)
+Dokumente, die das BMG nicht (oder nur überholt) auf Deutsch bekanntgemacht hat, werden über
+`quellen_laden.py` geladen und mit demselben Skript konvertiert:
+- **Deutsch (amtlich)** aus dem Amtsblatt der EU (EUR-Lex bzw. Cellar des Amts für Veröffentlichungen):
+  RL (EU) 2017/1572, DVO (EU) 2017/1569, VO (EU) 2019/6, DVO (EU) 2025/2091 und 2025/2154,
+  Leitlinien Hilfsstoffe (2015/C 95/02), GDP-Leitlinien (2013/C 343/01, 2015/C 95/01)
+- **Englisch** (nur englisch verfügbar, Dateiname endet auf „(EN)“): Teil III, Anhänge 1, 2, 17, 21,
+  neue Fassungen von Anhang 13 (Leitlinie 2017) und Anhang 19 (2026), Glossar, Korrespondenztabellen
+
+Pro Quelle lässt sich in `quellen.json` festlegen, wo der Text beginnt (`start`, regulärer Ausdruck)
+und ob Zeilennummern entfernt werden (`zeilennummern`).
+
+```
+python quellen_laden.py quellen.json ausgabe/_quellen
+python eu_gmp_to_docx.py --out ausgabe --quellen quellen.json            # BMG + Zusatzdokumente
+python eu_gmp_to_docx.py --pdf-dir - --out ausgabe --quellen quellen.json  # nur Zusatzdokumente
+```
