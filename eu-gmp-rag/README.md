@@ -2,12 +2,16 @@
 
 Lädt alle PDFs des Abschnitts „EU-GMP Leitfaden“ von
 https://www.bundesgesundheitsministerium.de/service/gesetze-und-verordnungen/bekanntmachungen
-und erzeugt daraus kompakte Word-Dateien (max. ca. 15 Seiten) mit dem reinen Richtlinientext.
+und erzeugt daraus kompakte Word-Dateien (max. ca. 6.500 Wörter ≈ 13–15 Seiten) mit dem reinen Richtlinientext.
 
-- Entfernt: Deckblatt der Bekanntmachung, Dokumenthistorie-Tabelle, Kopf-/Fußzeilen, Seitenzahlen
-- Tabellen werden zeilenweise als Text wiedergegeben („Spalte: Wert; Spalte: Wert“), damit ein RAG sie versteht
+- Entfernt: Deckblatt der Bekanntmachung, Status/Dokumenthistorie, Inhaltsverzeichnis, Kopf-/Fußzeilen
+  (inkl. Bundesanzeiger-Zeilen), Seitenzahlen – der Text beginnt bei „Grundsätze“/„Einleitung“/„Anwendungsbereich“
+- Tabellen werden zeilenweise als Text wiedergegeben („Spalte: Wert; Spalte: Wert“), damit ein RAG sie versteht;
+  grau hinterlegte Zellen (z. B. Teil II Tabelle 1, Anhang 7) werden als „(grau markiert)“ ausgegeben;
+  Tabellen ohne vollständigen Rahmen (z. B. Reinraumklassen in Teil IV) bleiben Zeile für Zeile erhalten
+- Fußnoten werden hinter den Absatz gestellt, statt ihn zu unterbrechen
 - Lange Dokumente (Teil II, Teil IV …) werden an Kapitelgrenzen geteilt, z. B.
-  `Teil II Wirkstoffe - Teil 2 von 5 - Kap 3-4 Personal, Gebäude und Anlagen.docx`
+  `Teil II Wirkstoffe (1 von 3) Kap 1-6 Einleitung, Qualitätsmanagement, Personal.docx`
 - Überschriften sind echte Word-Überschriften; jede Datei beginnt mit Titel und Quellenangabe
 
 ## Ergebnis herunterladen
